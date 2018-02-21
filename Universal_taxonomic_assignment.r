@@ -38,6 +38,9 @@ library(taxize)
 library(dplyr)
 library(tidyr)
 
+# EXAMPLE DATA
+# In the folder here is a file with some test data, and the resulting output: test_otus.fasta, BLAST_HIT_OUTPUT (result of blast command) and my_classified_otus.txt as the output from the script here.
+
 #This an example to read and format a blast table resulting from the blast command shown above
 IDtable=read.csv("BLAST_HIT_OUTPUT",sep='\t',header=F,as.is=TRUE)
 #Assign names for columns. Depends on the exact blast command that was excecuted!
