@@ -34,32 +34,32 @@
 #   ...and the input parameters
 
 # The scripts needs the following packages
-
 library(taxize)
 library(dplyr)
 library(tidyr)
 
 #This an example to read and format a blast table resulting from the blast command shown above
-IDtable=read.csv("16L_2_nochim.blasthits",sep='\t',header=F,as.is=TRUE)
-names(IDtable) <- c("qseqid","sseqid","pident","length","mismatch","gapopen","qstart","qend","sstart","send","evalue","bitscore","qlen","ssciname","staxid")
+IDtable=read.csv("~/Desktop/MiFish_next1_nochim.blasthits",sep='\t',header=F,as.is=TRUE)
+#Assign names for columns. Depends on the exact blast command that was excecuted!
+names(IDtable) <- c("qseqid","sseqid","pident","length","mismatch","gapopen","qstart","qend","sstart","send","evalue","bitscore","qlen","qcov","ssciname","staxid")
 
 # Suggestion: Make a small test input to see if it runs.
-IDtable <- IDtable[1:1000,]
+#IDtable <- IDtable[1:1000,]
 
-# After running/reading the 4 functions below, this is the command used to classify the data. 
-my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 0, lower_margin = 2, remove = c("uncultured","environmental"))
-
-# We use an upper margin of 0% to only best hits to evaluate taxonomy, and a lower margin of 2% to include a bit more species in the output to evaluate potential misclassifications.
+# After loading the 4 functions below, this is the command used to classify the data in one go! upper_margin, lower_margin and remove can be adjusted
+# We here use an upper margin of 0% to only best hits to evaluate taxonomy, and a lower margin of 2% to include a bit more species in the output to evaluate potential misclassifications.
 # Other values can be used. For example an upper_limit of 0.5% to include slightly suboptimal hits in the classification
+my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 0, lower_margin = 2, remove = c("uncultured","environmental"))
 
 # take a look at the data and save it
 my_clasified_result$classified_table
-my_clasified_result$all_classifications # HER KAN MAN SE ALLE SCORERNE FOR ALLE MATCHES DER BRUGES PER OTU
-my_clasified_result$all_classifications_summed # HER KAN MAN SE SUMMEREDE SCORER FOR ALLE TAXA PER OTU
+my_clasified_result$all_classifications # Here you can review all scores for all matches per OTU
+my_clasified_result$all_classifications_summed # Here you can review all summed scores for all taxa per OTU
 write.table(my_clasified_result$classified_table, "my_classified_otus.txt", sep = "\t", quote = F, row.names = F)
 
 #THESE FOUR FUNCTIONS NEED TO BE LOADED BEFORE RUNNING THE CLASSIFICATION.
-table=IDtable
+
+#Function1
 #Wrapper function using the three main functions - each step can be done manually also...
 assign_taxonomy <- function(table,upper_margin=0.5,lower_margin=2, remove = c("")){
  pf <- prefilter(table, upper_margin, lower_margin, remove)
@@ -69,6 +69,7 @@ assign_taxonomy <- function(table,upper_margin=0.5,lower_margin=2, remove = c(""
  return(result)
 }
 
+#Function2
 #Filter data OTU wise according to upper and lower margin set, and taxa to exclude
 prefilter <- function(IDtable, upper_margin=0.5, lower_margin=2, remove = c("")){
  new_IDtable <- IDtable[0,] # prepare filtered matchlist
@@ -98,6 +99,7 @@ prefilter <- function(IDtable, upper_margin=0.5, lower_margin=2, remove = c(""))
  return(new_IDtable)
 }
 
+#Function3
 # Get full taxonomic path for all hits within the upper limit of each OTU. Identical species are only queried once....
 get_classification <- function(IDtable2){
  require(taxize)
@@ -138,8 +140,8 @@ get_classification <- function(IDtable2){
  return(taxonomic_info)
 }
 
+#Function4
 #Function for evaluating the taxonomic assignment of each OTU. All hits within the upper margin are used in the evaluation weithted by thei evalue, so that suboptimal matches has a lower weight. All hits within the lower margin are put into the output (but not used for evaluating classification)
-
 evaluate_classification <- function(classified){
  require(tidyr)
  require(dplyr)
@@ -151,7 +153,7 @@ evaluate_classification <- function(classified){
   test2 <- test %>% filter(margin == "upper")
   test2$score <- 100*(1/test2$evalue)/sum(1/test2$evalue)  # HER BEREGSES SCOREN FOR ALLE MATCHES PER OTU
   test4 <- test2 %>% filter(margin == "upper") %>%
-   dplyr::select(margin,qseqid,staxid,pident,score,kingdom,phylum,class,order,family,genus,species) %>% 
+   dplyr::select(margin,qseqid,staxid,pident,score,qcov,kingdom,phylum,class,order,family,genus,species) %>% 
    group_by(qseqid,kingdom, phylum,class,order,family,genus,species) %>% 
    mutate(species_score=sum(score)) %>% 
    group_by(qseqid,kingdom, phylum,class,order,family,genus) %>% 
@@ -168,7 +170,7 @@ evaluate_classification <- function(classified){
    mutate(kingdom_score=sum(score)) %>% ungroup() %>%
    arrange(-kingdom_score,-phylum_score,-class_score,-order_score,-family_score,-genus_score,-species_score)
   test3 <- test4 %>% slice(1)
-   test5 <- test4 %>% distinct(qseqid,pident,kingdom, phylum,class,order,family,genus,species,kingdom_score,phylum_score,class_score,order_score,family_score,genus_score,species_score) 
+   test5 <- test4 %>% distinct(qseqid,pident,qcov,kingdom, phylum,class,order,family,genus,species,kingdom_score,phylum_score,class_score,order_score,family_score,genus_score,species_score) 
   string1 <- test %>% dplyr::select(species,pident) %>% 
    distinct(species,pident) %>% arrange(-pident) %>% t()
   string2 <- toString(unlist(string1))
