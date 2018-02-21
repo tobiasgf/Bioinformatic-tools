@@ -6,7 +6,7 @@
 # minimum number of fields requires are qseqid, staxid, pident, ssciname and evalue
 # optimal blastn command to use:
 #
-# ~/bin/blastn -db nt -max_target_seqs 40 -outfmt '6 std qlen ssciname staxid' -out INPUT.blasthits -qcov_hsp_perc 90 -perc_identity 80 -query INPUT
+# blastn -remote -db nt -max_target_seqs 40 -outfmt "'6 std qlen qcovs ssciname staxid" -out BLAST_HIT_OUTPUT -qcov_hsp_perc 90 -perc_identity 80 -query INPUT
 
 # Instructions
 # 1) Load the three functions below: assign_taxonomy, prefilter, get_classification, evaluate_classification
@@ -39,7 +39,7 @@ library(dplyr)
 library(tidyr)
 
 #This an example to read and format a blast table resulting from the blast command shown above
-IDtable=read.csv("~/Desktop/MiFish_next1_nochim.blasthits",sep='\t',header=F,as.is=TRUE)
+IDtable=read.csv("BLAST_HIT_OUTPUT",sep='\t',header=F,as.is=TRUE)
 #Assign names for columns. Depends on the exact blast command that was excecuted!
 names(IDtable) <- c("qseqid","sseqid","pident","length","mismatch","gapopen","qstart","qend","sstart","send","evalue","bitscore","qlen","qcov","ssciname","staxid")
 
