@@ -6,7 +6,7 @@
 # minimum number of fields requires are qseqid, staxid, pident, ssciname and evalue
 # optimal blastn command to use:
 #
-# blastn -remote -db nt -max_target_seqs 40 -outfmt "'6 std qlen qcovs ssciname staxid" -out BLAST_HIT_OUTPUT -qcov_hsp_perc 90 -perc_identity 80 -query INPUT
+# blastn -remote -db nt -max_target_seqs 40 -outfmt "'6 std qlen qcovs sgi sseq ssciname staxid" -out BLAST_HIT_OUTPUT -qcov_hsp_perc 90 -perc_identity 80 -query INPUT
 
 # Instructions
 # 1) Load the three functions below: assign_taxonomy, prefilter, get_classification, evaluate_classification
@@ -44,7 +44,7 @@ library(tidyr)
 #This an example to read and format a blast table resulting from the blast command shown above
 IDtable=read.csv("BLAST_HIT_OUTPUT",sep='\t',header=F,as.is=TRUE)
 #Assign names for columns. Depends on the exact blast command that was excecuted!
-names(IDtable) <- c("qseqid","sseqid","pident","length","mismatch","gapopen","qstart","qend","sstart","send","evalue","bitscore","qlen","qcov","ssciname","staxid")
+names(IDtable) <- c("qseqid","sseqid","pident","length","mismatch","gapopen","qstart","qend","sstart","send","evalue","bitscore","qlen","qcovs","ssciname","staxid")
 
 # Suggestion: Make a small test input to see if it runs.
 #IDtable <- IDtable[1:1000,]
@@ -156,7 +156,7 @@ evaluate_classification <- function(classified){
   test2 <- test %>% filter(margin == "upper")
   test2$score <- 100*(1/test2$evalue)/sum(1/test2$evalue)  # HER BEREGSES SCOREN FOR ALLE MATCHES PER OTU
   test4 <- test2 %>% filter(margin == "upper") %>%
-   dplyr::select(margin,qseqid,staxid,pident,score,qcov,kingdom,phylum,class,order,family,genus,species) %>% 
+   dplyr::select(margin,qseqid,sgi,sseq,staxid,pident,score,qcovs,kingdom,phylum,class,order,family,genus,species) %>% 
    group_by(qseqid,kingdom, phylum,class,order,family,genus,species) %>% 
    mutate(species_score=sum(score)) %>% 
    group_by(qseqid,kingdom, phylum,class,order,family,genus) %>% 
@@ -173,7 +173,7 @@ evaluate_classification <- function(classified){
    mutate(kingdom_score=sum(score)) %>% ungroup() %>%
    arrange(-kingdom_score,-phylum_score,-class_score,-order_score,-family_score,-genus_score,-species_score)
   test3 <- test4 %>% slice(1)
-   test5 <- test4 %>% distinct(qseqid,pident,qcov,kingdom, phylum,class,order,family,genus,species,kingdom_score,phylum_score,class_score,order_score,family_score,genus_score,species_score) 
+   test5 <- test4 %>% distinct(qseqid,sgi,sseq,pident,qcovs,kingdom, phylum,class,order,family,genus,species,kingdom_score,phylum_score,class_score,order_score,family_score,genus_score,species_score) 
   string1 <- test %>% dplyr::select(species,pident) %>% 
    distinct(species,pident) %>% arrange(-pident) %>% t()
   string2 <- toString(unlist(string1))
