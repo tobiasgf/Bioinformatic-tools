@@ -44,7 +44,7 @@ library(tidyr)
 #This an example to read and format a blast table resulting from the blast command shown above
 IDtable=read.csv("BLAST_HIT_OUTPUT",sep='\t',header=F,as.is=TRUE)
 #Assign names for columns. Depends on the exact blast command that was excecuted!
-names(IDtable) <- c("qseqid","sseqid","pident","length","mismatch","gapopen","qstart","qend","sstart","send","evalue","bitscore","qlen","qcovs","ssciname","staxid")
+names(IDtable) <- c("qseqid","sseqid","pident","length","mismatch","gapopen","qstart","qend","sstart","send","evalue","bitscore","qlen","qcovs","sgi","sseq","ssciname","staxid")
 
 # Suggestion: Make a small test input to see if it runs.
 #IDtable <- IDtable[1:1000,]
@@ -53,6 +53,9 @@ names(IDtable) <- c("qseqid","sseqid","pident","length","mismatch","gapopen","qs
 # We here use an upper margin of 0% to only best hits to evaluate taxonomy, and a lower margin of 2% to include a bit more species in the output to evaluate potential misclassifications.
 # Other values can be used. For example an upper_limit of 0.5% to include slightly suboptimal hits in the classification
 my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 0, lower_margin = 2, remove = c("uncultured","environmental"))
+
+#E.g. include evaluation (and taxonomic string) of all hits down to 10% below max
+my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 10, lower_margin = 10, remove = c("uncultured","environmental"))
 
 # take a look at the data and save it
 my_clasified_result$classified_table
