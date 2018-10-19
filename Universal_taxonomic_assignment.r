@@ -6,7 +6,7 @@
 # minimum number of fields requires are qseqid, staxid, pident, ssciname and evalue
 # optimal blastn command to use:
 #
-# blastn -remote -db nt -max_target_seqs 40 -outfmt "'6 std qlen qcovs sgi sseq ssciname staxid" -out BLAST_HIT_OUTPUT -qcov_hsp_perc 90 -perc_identity 80 -query INPUT
+# blastn -remote -db nt -max_target_seqs 40 -outfmt "6 std qlen qcovs sgi sseq ssciname staxid" -out BLAST_HIT_OUTPUT -qcov_hsp_perc 90 -perc_identity 80 -query INPUT
 
 # Instructions
 # 1) Load the three functions below: assign_taxonomy, prefilter, get_classification, evaluate_classification
@@ -52,7 +52,7 @@ names(IDtable) <- c("qseqid","sseqid","pident","length","mismatch","gapopen","qs
 # After loading the 4 functions below, this is the command used to classify the data in one go! upper_margin, lower_margin and remove can be adjusted
 # We here use an upper margin of 0% to only best hits to evaluate taxonomy, and a lower margin of 2% to include a bit more species in the output to evaluate potential misclassifications.
 # Other values can be used. For example an upper_limit of 0.5% to include slightly suboptimal hits in the classification
-my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 0, lower_margin = 2, remove = c("uncultured","environmental"))
+my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 0, lower_margin = 0.1, remove = c("uncultured","environmental","N/A"))
 
 #E.g. include evaluation (and taxonomic string) of all hits down to 10% below max
 my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 10, lower_margin = 10, remove = c("uncultured","environmental"))
@@ -61,16 +61,16 @@ my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 10, lower_margin =
 my_clasified_result$classified_table
 my_clasified_result$all_classifications # Here you can review all scores for all matches per OTU
 my_clasified_result$all_classifications_summed # Here you can review all summed scores for all taxa per OTU
-write.table(my_clasified_result$classified_table, "my_classified_otus.txt", sep = "\t", quote = F, row.names = F)
+write.table(my_clasified_result$classified_table, "my_classified_otus2.txt", sep = "\t", quote = F, row.names = F)
 
 #THESE FOUR FUNCTIONS NEED TO BE LOADED BEFORE RUNNING THE CLASSIFICATION.
 
 #Function1
 #Wrapper function using the three main functions - each step can be done manually also...
-assign_taxonomy <- function(table,upper_margin=0.5,lower_margin=2, remove = c("")){
+assign_taxonomy <- function(table,upper_margin=0.5,lower_margin=2, remove = c("uncultured","environmental","N/A"), useDB=TRUE, appendDB=TRUE){
  pf <- prefilter(table, upper_margin, lower_margin, remove)
- gc <- get_classification(pf)
- cf <- evaluate_classification(gc)
+ gc <- get_classification(pf, useDB, appendDB)
+ cf <- evaluate_classification(gc, remove)
  result <- list(classified_table=cf$taxonon_table, all_classifications=cf$all_taxa_table, all_classifications_summed=cf$all_taxa_table_summed,upper=upper_margin, lower=lower_margin, removed=remove)
  return(result)
 }
@@ -78,11 +78,13 @@ assign_taxonomy <- function(table,upper_margin=0.5,lower_margin=2, remove = c(""
 #Function2
 #Filter data OTU wise according to upper and lower margin set, and taxa to exclude
 prefilter <- function(IDtable, upper_margin=0.5, lower_margin=2, remove = c("")){
+ print(paste0("Collapsing taxids and preprocessing")) # make a progressline (indicating the index the loops needs to be
  new_IDtable <- IDtable[0,] # prepare filtered matchlist
  IDtable <- IDtable[!IDtable$staxid == "N/A",]
  ids <- names(table(IDtable$qseqid))
  i=1
  o=length(ids)
+ pb <- txtProgressBar(min = 0, max = o, style = 3)
  for (name in ids){
   test <- IDtable[which(IDtable$qseqid == name),] # select all lines for a query
   if (nchar(remove[1])>0){
@@ -101,33 +103,81 @@ prefilter <- function(IDtable, upper_margin=0.5, lower_margin=2, remove = c(""))
   
   new_IDtable = rbind(new_IDtable,test) # add this row to the filtered IDtable
   i=i+1
+  setTxtProgressBar(pb, i)
  }
+ close(pb)
  return(new_IDtable)
 }
 
 #Function3
 # Get full taxonomic path for all hits within the upper limit of each OTU. Identical species are only queried once....
-get_classification <- function(IDtable2){
+get_classification <- function(IDtable2, useDB=TRUE, appendDB=TRUE){
  require(taxize)
  all_staxids <- names(table(IDtable2$staxid[IDtable2$margin=="upper"])) # get all taxids for table
  all_classifications <- list() # prepare list for taxize output
+ 
+ if(useDB){
+  avail_files <- list.files()
+  
+  if(!"storedTaxidsRDS" %in% avail_files){
+    print("No database file (storedTaxidsRDS) available, classifying all taxids anew")
+    useDB=FALSE
+   } else {
+    storedTaxids <- readRDS("storedTaxidsRDS")
+    stored_vector <- storedTaxids$taxids %in% all_staxids
+    classify_vector <- !all_staxids %in% storedTaxids$taxids
+    print(paste0("Using ",sum(stored_vector)," stored classified taxids from database"))
+    reused_taxids <- storedTaxids$taxids[stored_vector]
+    reused_classifications <- storedTaxids$classifications[stored_vector]
+    all_staxids <- all_staxids[classify_vector]
+  }
+ }
+ 
  o=length(all_staxids) # number of taxids
+ 
+ print(paste0("Fetching classifications for ",o," taxids from scratch"))
  
  Start_from <- 1 # change if loop needs to be restarted due to time-out
  
  #Get ncbi classification of each entry
+ if(o>0){
+ pb <- txtProgressBar(min = 0, max = o, style = 3)
  for (cl in Start_from:o){ # the taxize command "classification" can be run on the all_staxids vector in one line, but often there is
   #a timeout command, therefor this loop workaround.
-  print(paste0("step 1 of 3: processing: ", cl , " of ", o , " taxids")) # make a progressline (indicating the index the loops needs to be
   #restarted from if it quits)
   all_classifications[cl] <- classification(all_staxids[cl], db = "ncbi")
+  if(round(cl/10) == cl/10){Sys.sleep(5)}
+  setTxtProgressBar(pb, i)
  }
+ close(pb)
+ }
+ 
+
+ if(appendDB){
+  avail_files <- list.files()
+  if(!"storedTaxidsRDS" %in% avail_files){
+   print(paste0("No database file found. Saving all ",length(all_staxids),"classified taxids in a new database (storedTaxidsRDS)"))
+   append_tax <- list(taxids=all_staxids,classifications=all_classifications)
+   saveRDS(append_tax,"storedTaxidsRDS")
+  } else {
+   storedTaxids <- readRDS("storedTaxidsRDS")
+   append_tax <- list(taxids=c(storedTaxids$taxids,all_staxids),classifications=c(storedTaxids$classifications,all_classifications))
+   print(paste0("Appending classification for ",length(all_staxids)," taxids to database"))
+   saveRDS(append_tax,"storedTaxidsRDS")
+  }
+ }
+ 
+ if(useDB){
+  all_staxids <- c(all_staxids,reused_taxids)
+  all_classifications <- c(all_classifications,reused_classifications)
+ }
+
  
  #Construct a taxonomic path from each classification
  output <- data.frame(staxid=character(),kingdom=character(), phylum=character(),class=character(),order=character(),family=character(),genus=character(),species=character(), stringsAsFactors=FALSE)
  totalnames <- length(all_staxids)
+ pb <- txtProgressBar(min = 0, max = totalnames, style = 3)
  for (curpart in seq(1:totalnames)){
-  print(paste0("step 2 of 3: progress: ", round(((curpart/totalnames) * 100),0) ,"%")) # make a progressline
   currenttaxon <- all_classifications[curpart][[1]]
   if (nchar(currenttaxon[1]) > 0) {
    spec <- all_staxids[curpart]
@@ -140,7 +190,9 @@ get_classification <- function(IDtable2){
    output[curpart,"species"] <- currenttaxon[which(currenttaxon$rank == "species"),"name"][1]
    output[curpart,"staxid"] <-  spec # add that row to the filtered IDtable
   }
+  setTxtProgressBar(pb, curpart)
  }
+ close(pb)
  taxonomic_info <- merge(IDtable2,output,by = "staxid", all=TRUE)
  taxonomic_info$species[is.na(taxonomic_info$species)] <- taxonomic_info$ssciname[is.na(taxonomic_info$species)]
  return(taxonomic_info)
@@ -148,16 +200,27 @@ get_classification <- function(IDtable2){
 
 #Function4
 #Function for evaluating the taxonomic assignment of each OTU. All hits within the upper margin are used in the evaluation weithted by thei evalue, so that suboptimal matches has a lower weight. All hits within the lower margin are put into the output (but not used for evaluating classification)
-evaluate_classification <- function(classified){
+evaluate_classification <- function(classified, remove=c("")){
  require(tidyr)
  require(dplyr)
  ids <- names(table(classified$qseqid))
  i <- 1
+ print("Evaluating the classifications")
+ pb <- txtProgressBar(min = 0, max = length(ids), style = 3)
  for (name in ids){
-  print(paste0("last step: progress: ", round(((i/length(ids)) * 100),0) ,"%")) # make a progressline
+  setTxtProgressBar(pb, i)
   test <- classified[which(classified$qseqid == name),]
   test2 <- test %>% filter(margin == "upper")
+  if (nchar(remove[1])>0){
+   test2x <- test2
+   for (rm in 1:length(remove)){
+    test2x <- test2x[!grepl(remove[rm], test2x$species,ignore.case = TRUE),]
+   }
+   if (nrow(test2x) > 1) {test2 <- test2x}
+  }
+  
   test2$score <- 100*(1/test2$evalue)/sum(1/test2$evalue)  # HER BEREGSES SCOREN FOR ALLE MATCHES PER OTU
+  
   test4 <- test2 %>% filter(margin == "upper") %>%
    dplyr::select(margin,qseqid,sgi,sseq,staxid,pident,score,qcovs,kingdom,phylum,class,order,family,genus,species) %>% 
    group_by(qseqid,kingdom, phylum,class,order,family,genus,species) %>% 
@@ -192,6 +255,7 @@ evaluate_classification <- function(classified){
   }
   i=i+1
  }
+ close(pb)
  total_result <- list(taxonon_table = result, all_taxa_table=result2, all_taxa_table_summed=result3)
  return(total_result)
 }
