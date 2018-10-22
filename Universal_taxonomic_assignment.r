@@ -1,6 +1,7 @@
 #Functions for classifying OTUs
 #
 # Author: Tobias G. Frøslev 27.1.2018
+# Modified substantioally 22.10.2018
 
 # requires a blast output from a set of OTUs
 # minimum number of fields requires are qseqid, staxid, pident, ssciname and evalue
@@ -52,7 +53,7 @@ names(IDtable) <- c("qseqid","sseqid","pident","length","mismatch","gapopen","qs
 # After loading the 4 functions below, this is the command used to classify the data in one go! upper_margin, lower_margin and remove can be adjusted
 # We here use an upper margin of 0% to only best hits to evaluate taxonomy, and a lower margin of 2% to include a bit more species in the output to evaluate potential misclassifications.
 # Other values can be used. For example an upper_limit of 0.5% to include slightly suboptimal hits in the classification
-my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 0, lower_margin = 0.1, remove = c("uncultured","environmental","N/A"))
+my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 0.5, lower_margin = 1, remove = c("uncultured","environmental","N/A"))
 
 #E.g. include evaluation (and taxonomic string) of all hits down to 10% below max
 my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 10, lower_margin = 10, remove = c("uncultured","environmental"))
@@ -61,7 +62,8 @@ my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 10, lower_margin =
 my_clasified_result$classified_table
 my_clasified_result$all_classifications # Here you can review all scores for all matches per OTU
 my_clasified_result$all_classifications_summed # Here you can review all summed scores for all taxa per OTU
-write.table(my_clasified_result$classified_table, "my_classified_otus2.txt", sep = "\t", quote = F, row.names = F)
+write.table(my_clasified_result$classified_table, "my_classified_otus.txt", sep = "\t", quote = F, row.names = F)
+write.table(my_clasified_result$adjusted_classified_table, "my_classified_otus_adjusted.txt", sep = "\t", quote = F, row.names = F)
 
 #THESE FOUR FUNCTIONS NEED TO BE LOADED BEFORE RUNNING THE CLASSIFICATION.
 
@@ -71,7 +73,8 @@ assign_taxonomy <- function(table,upper_margin=0.5,lower_margin=2, remove = c("u
  pf <- prefilter(table, upper_margin, lower_margin, remove)
  gc <- get_classification(pf, useDB, appendDB)
  cf <- evaluate_classification(gc, remove)
- result <- list(classified_table=cf$taxonon_table, all_classifications=cf$all_taxa_table, all_classifications_summed=cf$all_taxa_table_summed,upper=upper_margin, lower=lower_margin, removed=remove)
+ ac <- adjust_classification(cf$taxonon_table)
+ result <- list(adjusted_classified_table= ac, classified_table=cf$taxonon_table, all_classifications=cf$all_taxa_table, all_classifications_summed=cf$all_taxa_table_summed,upper=upper_margin, lower=lower_margin, removed=remove)
  return(result)
 }
 
@@ -146,8 +149,8 @@ get_classification <- function(IDtable2, useDB=TRUE, appendDB=TRUE){
   #a timeout command, therefor this loop workaround.
   #restarted from if it quits)
   all_classifications[cl] <- classification(all_staxids[cl], db = "ncbi")
-  if(round(cl/10) == cl/10){Sys.sleep(5)}
-  setTxtProgressBar(pb, i)
+  if(round(cl/10) == cl/10){Sys.sleep(2)}
+  setTxtProgressBar(pb, cl)
  }
  close(pb)
  }
@@ -220,6 +223,7 @@ evaluate_classification <- function(classified, remove=c("")){
   }
   
   test2$score <- 100*(1/test2$evalue)/sum(1/test2$evalue)  # HER BEREGSES SCOREN FOR ALLE MATCHES PER OTU
+  #test2 %>% group_by(species) %>% mutate(n_obs=n())
   
   test4 <- test2 %>% filter(margin == "upper") %>%
    dplyr::select(margin,qseqid,sgi,sseq,staxid,pident,score,qcovs,kingdom,phylum,class,order,family,genus,species) %>% 
@@ -239,9 +243,8 @@ evaluate_classification <- function(classified, remove=c("")){
    mutate(kingdom_score=sum(score)) %>% ungroup() %>%
    arrange(-kingdom_score,-phylum_score,-class_score,-order_score,-family_score,-genus_score,-species_score)
   test3 <- test4 %>% slice(1)
-   test5 <- test4 %>% distinct(qseqid,sgi,sseq,pident,qcovs,kingdom, phylum,class,order,family,genus,species,kingdom_score,phylum_score,class_score,order_score,family_score,genus_score,species_score) 
-  string1 <- test %>% dplyr::select(species,pident) %>% 
-   distinct(species,pident) %>% arrange(-pident) %>% t()
+  test5 <- test4 %>% distinct(qseqid,sgi,sseq,pident,qcovs,kingdom, phylum,class,order,family,genus,species,kingdom_score,phylum_score,class_score,order_score,family_score,genus_score,species_score) 
+  string1 <- test %>% dplyr::group_by(species,pident) %>%  summarize(count=n()) %>% select(species,count,pident) %>% arrange(-pident,-count) %>% t()
   string2 <- toString(unlist(string1))
   test3$alternatives <- string2
   if (i == 1){result <- test3} else{
@@ -258,5 +261,78 @@ evaluate_classification <- function(classified, remove=c("")){
  close(pb)
  total_result <- list(taxonon_table = result, all_taxa_table=result2, all_taxa_table_summed=result3)
  return(total_result)
+}
+
+# Function for adjusting taxonomic annotation. Annotation is adjusted based on the level of match (id_cut). Default settings, applicable for ITS2 data, 
+# is 98, 90, 85, 80, 75, 70, 50 for species, genus, family, order, class, phylum, kingdom assignment.
+# Assignment is also adjusted for taxonomic agreement among reference database matches. Default threshod scores are 90 for accepting a match at any taxoomic level.
+
+adjust_classification <- function(class_table, id_cut=c(98, 90, 85, 80, 75, 70, 50), uncertainty_levels=c(90,90,90,90,90,90,90)){
+ 
+ my_classifications <- class_table
+ 
+ cutoff_index <- which(my_classifications$pident < id_cut[7])
+ reclassify_index <- c("kingdom","phylum","class","order","family","genus")
+ my_classifications[cutoff_index,reclassify_index] <- "unidentified"
+ my_classifications$species[cutoff_index] <- paste0("unidentified_",my_classifications$phylum[cutoff_index], "_sp")
+ 
+ cutoff_index <- which(my_classifications$pident < id_cut[6]  & my_classifications$pident >= id_cut[7] & my_classifications$kingdom != "unidentified")
+ reclassify_index <- c("phylum","class","order","family","genus")
+ my_classifications[cutoff_index,reclassify_index] <- "unidentified"
+ my_classifications$species[cutoff_index] <- paste0("unidentified_",my_classifications$phylum[cutoff_index], "_sp")
+ 
+ cutoff_index <- which(my_classifications$pident < id_cut[5]  & my_classifications$pident >= id_cut[6] & my_classifications$phylum != "unidentified")
+ reclassify_index <- c("class","order","family","genus")
+ my_classifications[cutoff_index,reclassify_index] <- "unidentified"
+ my_classifications$species[cutoff_index] <- paste0("unidentified_",my_classifications$phylum[cutoff_index], "_sp")
+ 
+ cutoff_index <- which(my_classifications$pident < id_cut[4] & my_classifications$pident >= id_cut[5] & my_classifications$class != "unidentified")
+ reclassify_index <- c("order","family","genus")
+ my_classifications[cutoff_index,reclassify_index] <- "unidentified"
+ my_classifications$species[cutoff_index] <- paste0("unidentified_",my_classifications$class[cutoff_index], "_sp")
+ 
+ cutoff_index <- which(my_classifications$pident < id_cut[3] & my_classifications$pident >= id_cut[4] & my_classifications$order != "unidentified")
+ reclassify_index <- c("family","genus")
+ my_classifications[cutoff_index,reclassify_index] <- "unidentified"
+ my_classifications$species[cutoff_index] <- paste0("unidentified_",my_classifications$order[cutoff_index],"_sp")
+ 
+ cutoff_index <- which(my_classifications$pident < id_cut[2] & my_classifications$pident >= id_cut[3] & my_classifications$family != "unidentified")
+ reclassify_index <- c("genus")
+ my_classifications$genus[cutoff_index] <- "unidentified"
+ my_classifications$species[cutoff_index] <- paste0("unidentified_",my_classifications$family[cutoff_index], "_sp")
+ 
+ cutoff_index <- which(my_classifications$pident < id_cut[1] & my_classifications$pident >= id_cut[2] & my_classifications$genus != "unidentified")
+ my_classifications$species[cutoff_index] <- paste0("unidentified_",my_classifications$genus[cutoff_index], "_sp")
+ 
+ my_classifications$kingdom[my_classifications$kingdom_score<uncertainty_levels[7]] <- "uncertain"
+ my_classifications$phylum[my_classifications$phylum_score<uncertainty_levels[6]] <- "uncertain"
+ my_classifications$class[my_classifications$class_score<uncertainty_levels[5]] <- "uncertain"
+ my_classifications$order[my_classifications$order_score<uncertainty_levels[4]] <- "uncertain"
+ my_classifications$family[my_classifications$family_score<uncertainty_levels[3]] <- "uncertain"
+ my_classifications$genus[my_classifications$genus_score<uncertainty_levels[2]] <- "uncertain"
+ 
+ print("Adjusting the classifications")
+ pb <- txtProgressBar(min = 0, max = nrow(my_classifications), style = 3)
+ 
+ for(i in 1:nrow(my_classifications)){
+  setTxtProgressBar(pb, i)
+  if (my_classifications[i,"species_score"] < uncertainty_levels[1]){
+   if (!my_classifications[i,"genus"] %in% c("uncertain", "unidentified", NA)){
+    my_classifications[i,"species"] <- paste0("uncertain_",my_classifications[i,"genus"],"_sp")
+   } else if (!my_classifications[i,"family"] %in% c("uncertain", "unidentified", NA)){
+    my_classifications[i,"species"] <- paste0("uncertain_",my_classifications[i,"family"],"_sp")
+   } else if (!my_classifications[i,"order"] %in% c("uncertain", "unidentified", NA)){
+    my_classifications[i,"species"] <- paste0("uncertain_",my_classifications[i,"order"],"_sp")
+   } else if (!my_classifications[i,"class"] %in% c("uncertain", "unidentified", NA)){
+    my_classifications[i,"species"] <- paste0("uncertain_",my_classifications[i,"class"],"_sp")
+   } else if (!my_classifications[i,"phylum"] %in% c("uncertain", "unidentified", NA)){
+    my_classifications[i,"species"] <- paste0("uncertain_",my_classifications[i,"phylum"],"_sp")
+   } else if (!my_classifications[i,"kingdom"] %in% c("uncertain", "unidentified", NA)){
+    my_classifications[i,"species"] <- paste0("uncertain_",my_classifications[i,"kingdom"],"_sp")
+   }
+  }
+ }
+ close(pb)
+ return(my_classifications)
 }
 
