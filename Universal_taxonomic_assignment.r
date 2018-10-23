@@ -1,7 +1,7 @@
 #Functions for classifying OTUs
 #
 # Author: Tobias G. Frøslev 27.1.2018
-# Modified substantioally 22.10.2018
+# Modified substantioally 22.10.2018 - info/instructions not updated!
 
 # requires a blast output from a set of OTUs
 # minimum number of fields requires are qseqid, staxid, pident, ssciname and evalue
@@ -34,6 +34,8 @@
 #   $all_classifications: this is the table used to make the classified_table. It contains all hits above lower_magrin for all OTUs and their classifications (only upper_margin).
 #   ...and the input parameters
 
+options(ENTREZ_KEY = "870bca84f5753d51f7cae3f745ff9adb2d09")
+
 # The scripts needs the following packages
 library(taxize)
 library(dplyr)
@@ -53,7 +55,7 @@ names(IDtable) <- c("qseqid","sseqid","pident","length","mismatch","gapopen","qs
 # After loading the 4 functions below, this is the command used to classify the data in one go! upper_margin, lower_margin and remove can be adjusted
 # We here use an upper margin of 0% to only best hits to evaluate taxonomy, and a lower margin of 2% to include a bit more species in the output to evaluate potential misclassifications.
 # Other values can be used. For example an upper_limit of 0.5% to include slightly suboptimal hits in the classification
-my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 0.5, lower_margin = 1, remove = c("uncultured","environmental","N/A"))
+my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 1, lower_margin = 2, remove = c("uncultured","environmental","N/A"))
 
 #E.g. include evaluation (and taxonomic string) of all hits down to 10% below max
 my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 10, lower_margin = 10, remove = c("uncultured","environmental"))
@@ -114,19 +116,19 @@ prefilter <- function(IDtable, upper_margin=0.5, lower_margin=2, remove = c(""))
 
 #Function3
 # Get full taxonomic path for all hits within the upper limit of each OTU. Identical species are only queried once....
-get_classification <- function(IDtable2, useDB=TRUE, appendDB=TRUE){
+get_classification <- function(IDtable2, useDB=TRUE, appendDB=TRUE, db_path="~/tax_db", tax_db="storedTaxidsRDS"){
  require(taxize)
  all_staxids <- names(table(IDtable2$staxid[IDtable2$margin=="upper"])) # get all taxids for table
  all_classifications <- list() # prepare list for taxize output
  
  if(useDB){
-  avail_files <- list.files()
-  
-  if(!"storedTaxidsRDS" %in% avail_files){
+  if(!file_test("-d", db_path)) dir.create(db_path)
+  db_file <- file.path(db_path, tax_db)
+  if(!file_test("-f", db_file)){
     print("No database file (storedTaxidsRDS) available, classifying all taxids anew")
     useDB=FALSE
    } else {
-    storedTaxids <- readRDS("storedTaxidsRDS")
+    storedTaxids <- readRDS(db_file)
     stored_vector <- storedTaxids$taxids %in% all_staxids
     classify_vector <- !all_staxids %in% storedTaxids$taxids
     print(paste0("Using ",sum(stored_vector)," stored classified taxids from database"))
@@ -157,16 +159,16 @@ get_classification <- function(IDtable2, useDB=TRUE, appendDB=TRUE){
  
 
  if(appendDB){
-  avail_files <- list.files()
-  if(!"storedTaxidsRDS" %in% avail_files){
+  db_file <- file.path(db_path, tax_db)
+  if(!file_test("-f", db_file)){
    print(paste0("No database file found. Saving all ",length(all_staxids),"classified taxids in a new database (storedTaxidsRDS)"))
    append_tax <- list(taxids=all_staxids,classifications=all_classifications)
-   saveRDS(append_tax,"storedTaxidsRDS")
+   saveRDS(append_tax,db_file)
   } else {
-   storedTaxids <- readRDS("storedTaxidsRDS")
+   storedTaxids <- readRDS(db_file)
    append_tax <- list(taxids=c(storedTaxids$taxids,all_staxids),classifications=c(storedTaxids$classifications,all_classifications))
    print(paste0("Appending classification for ",length(all_staxids)," taxids to database"))
-   saveRDS(append_tax,"storedTaxidsRDS")
+   saveRDS(append_tax,db_file)
   }
  }
  
