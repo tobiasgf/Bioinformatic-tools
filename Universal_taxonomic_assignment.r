@@ -34,8 +34,6 @@
 #   $all_classifications: this is the table used to make the classified_table. It contains all hits above lower_magrin for all OTUs and their classifications (only upper_margin).
 #   ...and the input parameters
 
-options(ENTREZ_KEY = "870bca84f5753d51f7cae3f745ff9adb2d09")
-
 # The scripts needs the following packages
 library(taxize)
 library(dplyr)
