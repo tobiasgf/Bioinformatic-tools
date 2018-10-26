@@ -43,38 +43,41 @@ library(tidyr)
 # In the folder here is a file with some test data, and the resulting output: test_otus.fasta, BLAST_HIT_OUTPUT (result of blast command) and my_classified_otus.txt as the output from the script here.
 
 #This an example to read and format a blast table resulting from the blast command shown above
-IDtable=read.csv("BLAST_HIT_OUTPUT",sep='\t',header=F,as.is=TRUE)
+#    IDtable=read.csv("BLAST_HIT_OUTPUT",sep='\t',header=F,as.is=TRUE)
 #Assign names for columns. Depends on the exact blast command that was excecuted!
-names(IDtable) <- c("qseqid","sseqid","pident","length","mismatch","gapopen","qstart","qend","sstart","send","evalue","bitscore","qlen","qcovs","sgi","sseq","ssciname","staxid")
+#    names(IDtable) <- c("qseqid","sseqid","pident","length","mismatch","gapopen","qstart","qend","sstart","send","evalue","bitscore","qlen","qcovs","sgi","sseq","ssciname","staxid")
 
 # Suggestion: Make a small test input to see if it runs.
-#IDtable <- IDtable[1:1000,]
+#     IDtable <- IDtable[1:1000,]
 
 # After loading the 4 functions below, this is the command used to classify the data in one go! upper_margin, lower_margin and remove can be adjusted
 # We here use an upper margin of 0% to only best hits to evaluate taxonomy, and a lower margin of 2% to include a bit more species in the output to evaluate potential misclassifications.
 # Other values can be used. For example an upper_limit of 0.5% to include slightly suboptimal hits in the classification
-my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 1, lower_margin = 2, remove = c("uncultured","environmental","N/A"))
+#     my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 0.5, lower_margin = 1, remove = c("uncultured","environmental","N/A"),ambiguity_cutoff=c(80,80,80,80,80,80,80))
 
 #E.g. include evaluation (and taxonomic string) of all hits down to 10% below max
-my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 10, lower_margin = 10, remove = c("uncultured","environmental"))
+#     my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 10, lower_margin = 10, remove = c("uncultured","environmental"))
 
 # take a look at the data and save it
-my_clasified_result$classified_table
-my_clasified_result$all_classifications # Here you can review all scores for all matches per OTU
-my_clasified_result$all_classifications_summed # Here you can review all summed scores for all taxa per OTU
-write.table(my_clasified_result$classified_table, "my_classified_otus.txt", sep = "\t", quote = F, row.names = F)
-write.table(my_clasified_result$adjusted_classified_table, "my_classified_otus_adjusted.txt", sep = "\t", quote = F, row.names = F)
+#     my_clasified_result$classified_table
+#     my_clasified_result$all_classifications # Here you can review all scores for all matches per OTU
+#     my_clasified_result$all_classifications_summed # Here you can review all summed scores for all taxa per OTU
+#     write.table(my_clasified_result$classified_table, "my_classified_otus.txt", sep = "\t", quote = F, row.names = F)
+#     write.table(my_clasified_result$adjusted_classified_table, "my_classified_otus_adjusted.txt", sep = "\t", quote = F, row.names = F)
+#     saveRDS(my_clasified_result,"myclassifiedresultsRDS")
+
+
 
 #THESE FOUR FUNCTIONS NEED TO BE LOADED BEFORE RUNNING THE CLASSIFICATION.
 
 #Function1
 #Wrapper function using the three main functions - each step can be done manually also...
-assign_taxonomy <- function(table,upper_margin=0.5,lower_margin=2, remove = c("uncultured","environmental","N/A"), useDB=TRUE, appendDB=TRUE){
+assign_taxonomy <- function(table,upper_margin=0.5,lower_margin=2, remove = c("uncultured","environmental","N/A"), useDB=TRUE, appendDB=TRUE, db_path="~/tax_db", tax_db="storedTaxidsRDS", id_cut=c(98, 90, 85, 80, 75, 70, 50), ambiguity_cutoff=c(90,90,90,90,90,90,90)){
  pf <- prefilter(table, upper_margin, lower_margin, remove)
- gc <- get_classification(pf, useDB, appendDB)
- cf <- evaluate_classification(gc, remove)
- ac <- adjust_classification(cf$taxonon_table)
- result <- list(adjusted_classified_table= ac, classified_table=cf$taxonon_table, all_classifications=cf$all_taxa_table, all_classifications_summed=cf$all_taxa_table_summed,upper=upper_margin, lower=lower_margin, removed=remove)
+ gc <- get_classification(pf$preprocessed_table, useDB, appendDB, db_path, tax_db)
+ cf <- evaluate_classification(gc$taxonomic_info, remove)
+ ac <- adjust_classification(cf$taxonon_table, id_cut, ambiguity_cutoff)
+ result <- list(adjusted_classified_table = ac$adjusted_classification, classified_table=cf$taxonon_table, all_classifications=cf$all_taxa_table, all_classifications_summed=cf$all_taxa_table_summed, upper_margin=upper_margin, lower_margin=lower_margin, remove=remove, useDB=useDB, appendDB=appendDB, db_path=db_path, tax_db=tax_db, id_cut=id_cut, ambiguity_cutoff=ambiguity_cutoff, used_from_database=gc$used_from_database, added_to_database=gc$added_to_database)
  return(result)
 }
 
@@ -109,19 +112,22 @@ prefilter <- function(IDtable, upper_margin=0.5, lower_margin=2, remove = c(""))
   setTxtProgressBar(pb, i)
  }
  close(pb)
- return(new_IDtable)
+ result <- list(preprocessed_table = new_IDtable, upper_margin=upper_margin, lower_margin=lower_margin, remove=remove)
+ return(result)
 }
 
 #Function3
 # Get full taxonomic path for all hits within the upper limit of each OTU. Identical species are only queried once....
 get_classification <- function(IDtable2, useDB=TRUE, appendDB=TRUE, db_path="~/tax_db", tax_db="storedTaxidsRDS"){
  require(taxize)
+ reused_taxids <- vector()
+ classified_taxids <- vector()
  all_staxids <- names(table(IDtable2$staxid[IDtable2$margin=="upper"])) # get all taxids for table
  all_classifications <- list() # prepare list for taxize output
+ db_file <- file.path(db_path, tax_db)
  
  if(useDB){
   if(!file_test("-d", db_path)) dir.create(db_path)
-  db_file <- file.path(db_path, tax_db)
   if(!file_test("-f", db_file)){
     print("No database file (storedTaxidsRDS) available, classifying all taxids anew")
     useDB=FALSE
@@ -133,8 +139,11 @@ get_classification <- function(IDtable2, useDB=TRUE, appendDB=TRUE, db_path="~/t
     reused_taxids <- storedTaxids$taxids[stored_vector]
     reused_classifications <- storedTaxids$classifications[stored_vector]
     all_staxids <- all_staxids[classify_vector]
+    classified_taxids <- all_staxids
   }
  }
+ 
+ if(appendDB){classified_taxids <- all_staxids}
  
  o=length(all_staxids) # number of taxids
  
@@ -157,7 +166,6 @@ get_classification <- function(IDtable2, useDB=TRUE, appendDB=TRUE, db_path="~/t
  
 
  if(appendDB){
-  db_file <- file.path(db_path, tax_db)
   if(!file_test("-f", db_file)){
    print(paste0("No database file found. Saving all ",length(all_staxids),"classified taxids in a new database (storedTaxidsRDS)"))
    append_tax <- list(taxids=all_staxids,classifications=all_classifications)
@@ -198,7 +206,8 @@ get_classification <- function(IDtable2, useDB=TRUE, appendDB=TRUE, db_path="~/t
  close(pb)
  taxonomic_info <- merge(IDtable2,output,by = "staxid", all=TRUE)
  taxonomic_info$species[is.na(taxonomic_info$species)] <- taxonomic_info$ssciname[is.na(taxonomic_info$species)]
- return(taxonomic_info)
+ result <- list(taxonomic_info=taxonomic_info, useDB=useDB, appendDB=appendDB, db_file=db_file, used_from_database = reused_taxids, added_to_database = classified_taxids)
+ return(result)
 }
 
 #Function4
@@ -244,7 +253,7 @@ evaluate_classification <- function(classified, remove=c("")){
    arrange(-kingdom_score,-phylum_score,-class_score,-order_score,-family_score,-genus_score,-species_score)
   test3 <- test4 %>% slice(1)
   test5 <- test4 %>% distinct(qseqid,sgi,sseq,pident,qcovs,kingdom, phylum,class,order,family,genus,species,kingdom_score,phylum_score,class_score,order_score,family_score,genus_score,species_score) 
-  string1 <- test %>% dplyr::group_by(species,pident) %>%  summarize(count=n()) %>% select(species,count,pident) %>% arrange(-pident,-count) %>% t()
+  string1 <- test %>% dplyr::group_by(species,pident) %>%  summarize(count=n()) %>% dplyr::select(species,count,pident) %>% arrange(-pident,-count) %>% t()
   string2 <- toString(unlist(string1))
   test3$alternatives <- string2
   if (i == 1){result <- test3} else{
@@ -259,7 +268,7 @@ evaluate_classification <- function(classified, remove=c("")){
   i=i+1
  }
  close(pb)
- total_result <- list(taxonon_table = result, all_taxa_table=result2, all_taxa_table_summed=result3)
+ total_result <- list(taxonon_table = result, all_taxa_table=result2, all_taxa_table_summed=result3, remove=remove)
  return(total_result)
 }
 
@@ -267,72 +276,78 @@ evaluate_classification <- function(classified, remove=c("")){
 # is 98, 90, 85, 80, 75, 70, 50 for species, genus, family, order, class, phylum, kingdom assignment.
 # Assignment is also adjusted for taxonomic agreement among reference database matches. Default threshod scores are 90 for accepting a match at any taxoomic level.
 
-adjust_classification <- function(class_table, id_cut=c(98, 90, 85, 80, 75, 70, 50), uncertainty_levels=c(90,90,90,90,90,90,90)){
+adjust_classification <- function(class_table, id_cut=c(98, 90, 85, 80, 75, 70, 50), ambiguity_cutoff=c(90,90,90,90,90,90,90)){
  
  my_classifications <- class_table
  
  cutoff_index <- which(my_classifications$pident < id_cut[7])
  reclassify_index <- c("kingdom","phylum","class","order","family","genus")
- my_classifications[cutoff_index,reclassify_index] <- "unidentified"
- my_classifications$species[cutoff_index] <- paste0("unidentified_",my_classifications$phylum[cutoff_index], "_sp")
+ my_classifications[cutoff_index,reclassify_index] <- "unmatched"
+ my_classifications$species[cutoff_index] <- paste0("unmatched_",my_classifications$phylum[cutoff_index], "_sp")
  
- cutoff_index <- which(my_classifications$pident < id_cut[6]  & my_classifications$pident >= id_cut[7] & my_classifications$kingdom != "unidentified")
+ cutoff_index <- which(my_classifications$pident < id_cut[6]  & my_classifications$pident >= id_cut[7] & my_classifications$kingdom != "unmatched")
  reclassify_index <- c("phylum","class","order","family","genus")
- my_classifications[cutoff_index,reclassify_index] <- "unidentified"
- my_classifications$species[cutoff_index] <- paste0("unidentified_",my_classifications$phylum[cutoff_index], "_sp")
+ my_classifications[cutoff_index,reclassify_index] <- "unmatched"
+ my_classifications$species[cutoff_index] <- paste0("unmatched_",my_classifications$phylum[cutoff_index], "_sp")
  
- cutoff_index <- which(my_classifications$pident < id_cut[5]  & my_classifications$pident >= id_cut[6] & my_classifications$phylum != "unidentified")
+ cutoff_index <- which(my_classifications$pident < id_cut[5]  & my_classifications$pident >= id_cut[6] & my_classifications$phylum != "unmatched")
  reclassify_index <- c("class","order","family","genus")
- my_classifications[cutoff_index,reclassify_index] <- "unidentified"
- my_classifications$species[cutoff_index] <- paste0("unidentified_",my_classifications$phylum[cutoff_index], "_sp")
+ my_classifications[cutoff_index,reclassify_index] <- "unmatched"
+ my_classifications$species[cutoff_index] <- paste0("unmatched_",my_classifications$phylum[cutoff_index], "_sp")
  
- cutoff_index <- which(my_classifications$pident < id_cut[4] & my_classifications$pident >= id_cut[5] & my_classifications$class != "unidentified")
+ cutoff_index <- which(my_classifications$pident < id_cut[4] & my_classifications$pident >= id_cut[5] & my_classifications$class != "unmatched")
  reclassify_index <- c("order","family","genus")
- my_classifications[cutoff_index,reclassify_index] <- "unidentified"
- my_classifications$species[cutoff_index] <- paste0("unidentified_",my_classifications$class[cutoff_index], "_sp")
+ my_classifications[cutoff_index,reclassify_index] <- "unmatched"
+ my_classifications$species[cutoff_index] <- paste0("unmatched_",my_classifications$class[cutoff_index], "_sp")
  
- cutoff_index <- which(my_classifications$pident < id_cut[3] & my_classifications$pident >= id_cut[4] & my_classifications$order != "unidentified")
+ cutoff_index <- which(my_classifications$pident < id_cut[3] & my_classifications$pident >= id_cut[4] & my_classifications$order != "unmatched")
  reclassify_index <- c("family","genus")
- my_classifications[cutoff_index,reclassify_index] <- "unidentified"
- my_classifications$species[cutoff_index] <- paste0("unidentified_",my_classifications$order[cutoff_index],"_sp")
+ my_classifications[cutoff_index,reclassify_index] <- "unmatched"
+ my_classifications$species[cutoff_index] <- paste0("unmatched_",my_classifications$order[cutoff_index],"_sp")
  
- cutoff_index <- which(my_classifications$pident < id_cut[2] & my_classifications$pident >= id_cut[3] & my_classifications$family != "unidentified")
+ cutoff_index <- which(my_classifications$pident < id_cut[2] & my_classifications$pident >= id_cut[3] & my_classifications$family != "unmatched")
  reclassify_index <- c("genus")
- my_classifications$genus[cutoff_index] <- "unidentified"
- my_classifications$species[cutoff_index] <- paste0("unidentified_",my_classifications$family[cutoff_index], "_sp")
+ my_classifications$genus[cutoff_index] <- "unmatched"
+ my_classifications$species[cutoff_index] <- paste0("unmatched_",my_classifications$family[cutoff_index], "_sp")
  
- cutoff_index <- which(my_classifications$pident < id_cut[1] & my_classifications$pident >= id_cut[2] & my_classifications$genus != "unidentified")
- my_classifications$species[cutoff_index] <- paste0("unidentified_",my_classifications$genus[cutoff_index], "_sp")
+ cutoff_index <- which(my_classifications$pident < id_cut[1] & my_classifications$pident >= id_cut[2] & my_classifications$genus != "unmatched")
+ my_classifications$species[cutoff_index] <- paste0("unmatched_",my_classifications$genus[cutoff_index], "_sp")
  
- my_classifications$kingdom[my_classifications$kingdom_score<uncertainty_levels[7]] <- "uncertain"
- my_classifications$phylum[my_classifications$phylum_score<uncertainty_levels[6]] <- "uncertain"
- my_classifications$class[my_classifications$class_score<uncertainty_levels[5]] <- "uncertain"
- my_classifications$order[my_classifications$order_score<uncertainty_levels[4]] <- "uncertain"
- my_classifications$family[my_classifications$family_score<uncertainty_levels[3]] <- "uncertain"
- my_classifications$genus[my_classifications$genus_score<uncertainty_levels[2]] <- "uncertain"
+ my_classifications$kingdom[my_classifications$kingdom_score<ambiguity_cutoff[7]] <- "ambiguous"
+ my_classifications$phylum[my_classifications$phylum_score<ambiguity_cutoff[6]] <- "ambiguous"
+ my_classifications$class[my_classifications$class_score<ambiguity_cutoff[5]] <- "ambiguous"
+ my_classifications$order[my_classifications$order_score<ambiguity_cutoff[4]] <- "ambiguous"
+ my_classifications$family[my_classifications$family_score<ambiguity_cutoff[3]] <- "ambiguous"
+ my_classifications$genus[my_classifications$genus_score<ambiguity_cutoff[2]] <- "ambiguous"
  
  print("Adjusting the classifications")
  pb <- txtProgressBar(min = 0, max = nrow(my_classifications), style = 3)
  
  for(i in 1:nrow(my_classifications)){
   setTxtProgressBar(pb, i)
-  if (my_classifications[i,"species_score"] < uncertainty_levels[1]){
-   if (!my_classifications[i,"genus"] %in% c("uncertain", "unidentified", NA)){
-    my_classifications[i,"species"] <- paste0("uncertain_",my_classifications[i,"genus"],"_sp")
-   } else if (!my_classifications[i,"family"] %in% c("uncertain", "unidentified", NA)){
-    my_classifications[i,"species"] <- paste0("uncertain_",my_classifications[i,"family"],"_sp")
-   } else if (!my_classifications[i,"order"] %in% c("uncertain", "unidentified", NA)){
-    my_classifications[i,"species"] <- paste0("uncertain_",my_classifications[i,"order"],"_sp")
-   } else if (!my_classifications[i,"class"] %in% c("uncertain", "unidentified", NA)){
-    my_classifications[i,"species"] <- paste0("uncertain_",my_classifications[i,"class"],"_sp")
-   } else if (!my_classifications[i,"phylum"] %in% c("uncertain", "unidentified", NA)){
-    my_classifications[i,"species"] <- paste0("uncertain_",my_classifications[i,"phylum"],"_sp")
-   } else if (!my_classifications[i,"kingdom"] %in% c("uncertain", "unidentified", NA)){
-    my_classifications[i,"species"] <- paste0("uncertain_",my_classifications[i,"kingdom"],"_sp")
+  if (my_classifications[i,"pident"] > id_cut[1] & my_classifications[i,"species_score"] < ambiguity_cutoff[1]){
+   if (!my_classifications[i,"genus"] %in% c("ambiguous", "unmatched", NA)){
+    my_classifications[i,"species"] <- paste0("ambiguous_",my_classifications[i,"genus"],"_sp")
+   } else if (!my_classifications[i,"family"] %in% c("ambiguous", "unmatched", NA)){
+    my_classifications[i,"species"] <- paste0("ambiguous_",my_classifications[i,"family"],"_sp")
+   } else if (!my_classifications[i,"order"] %in% c("ambiguous", "unmatched", NA)){
+    my_classifications[i,"species"] <- paste0("ambiguous_",my_classifications[i,"order"],"_sp")
+   } else if (!my_classifications[i,"class"] %in% c("ambiguous", "unmatched", NA)){
+    my_classifications[i,"species"] <- paste0("ambiguous_",my_classifications[i,"class"],"_sp")
+   } else if (!my_classifications[i,"phylum"] %in% c("ambiguous", "unmatched", NA)){
+    my_classifications[i,"species"] <- paste0("ambiguous_",my_classifications[i,"phylum"],"_sp")
+   } else if (!my_classifications[i,"kingdom"] %in% c("ambiguous", "unmatched", NA)){
+    my_classifications[i,"species"] <- paste0("ambiguous_",my_classifications[i,"kingdom"],"_sp")
    }
   }
  }
+ 
  close(pb)
- return(my_classifications)
+ result <-  list(adjusted_classification = my_classifications, id_cut=id_cut, ambiguity_cutoff=ambiguity_cutoff)
+ return(result)
 }
 
+#IDtable=read.csv("BLASTHITS_TOTAL2",sep='\t',header=F,as.is=TRUE)
+##Assign names for columns. Depends on the exact blast command that was excecuted!
+#names(IDtable) <- c("qseqid","sseqid","pident","length","mismatch","gapopen","qstart","qend","sstart","send","evalue","bitscore","qlen","qcovs","sgi","sseq","ssciname","staxid")
+#my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 0.5, lower_margin = 1, remove = c("uncultured","environmental","N/A"),ambiguity_cutoff=c(80,80,80,80,80,80,80))
