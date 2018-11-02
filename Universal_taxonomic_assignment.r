@@ -346,8 +346,3 @@ adjust_classification <- function(class_table, id_cut=c(98, 90, 85, 80, 75, 70, 
  result <-  list(adjusted_classification = my_classifications, id_cut=id_cut, ambiguity_cutoff=ambiguity_cutoff)
  return(result)
 }
-
-#IDtable=read.csv("BLASTHITS_TOTAL2",sep='\t',header=F,as.is=TRUE)
-##Assign names for columns. Depends on the exact blast command that was excecuted!
-#names(IDtable) <- c("qseqid","sseqid","pident","length","mismatch","gapopen","qstart","qend","sstart","send","evalue","bitscore","qlen","qcovs","sgi","sseq","ssciname","staxid")
-#my_clasified_result <- assign_taxonomy(IDtable,upper_margin = 0.5, lower_margin = 1, remove = c("uncultured","environmental","N/A"),ambiguity_cutoff=c(80,80,80,80,80,80,80))
