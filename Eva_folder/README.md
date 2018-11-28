@@ -1,4 +1,4 @@
-# Code files used in the manuscript  **Reliable biodiversity metrics from co-occurence based post-clustering curation of amplicon data.**      
+# Code files used in the manuscript  **xxxxx**      
 ___
 
 These scripts form a pipeline for processing metabarcoding data from next-generation sequencing platforms. The pipeline consists of one bash script and three R scripts:  
